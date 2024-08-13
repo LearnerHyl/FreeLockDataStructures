@@ -10,39 +10,38 @@
 // g++ threadprinter.cpp -o tp
 class ThreadPrinter{
 public:
-    ThreadPrinter(int threadNum, int printSum):threadNum_(threadNum), printSum_(printSum) {
+    ThreadPrinter(int printSum, int threadNum): printSum_(printSum), threadNum_(threadNum) {
 
     }
 
     void PrintNumber() {
-        int curThreadId = nextThreadId_++;
-        while (currentNum_ < printSum_) {
-            if (currentNum_ % threadNum_ == curThreadId) {
-                std::cout << "Thread Id " << curThreadId << "print number" << currentNum_++ << std::endl;
+        int threadId = curThreadId_++;
+        while (curPrintVal_ <= printSum_) {
+            if (curPrintVal_ % threadNum_ == threadId) {
+                std::cout << "Thread:" << threadId << " print number:" << curPrintVal_++ << std::endl;
             }
-            // 否则让出CPU给其他的线程
+            // 让出CPU给别的线程
             std::this_thread::yield();
         }
     }
 
     void StartPrinter() {
         std::vector<std::thread> threadSet;
-        // 初始化线程池
         for (int i = 0; i < threadNum_; i++) {
             threadSet.emplace_back(&ThreadPrinter::PrintNumber, this);
         }
 
-        // 等待所有的线程依次退出
+        // 等待线程退出
         for (auto &thd : threadSet) {
             thd.join();
         }
     }
 
 private:
-    std::atomic<int> nextThreadId_{0};
-    std::atomic<int> currentNum_{0};
-    int threadNum_;
+    std::atomic<int> curThreadId_{0};
+    std::atomic<int> curPrintVal_{0};
     int printSum_;
+    int threadNum_;
 };
 
 int main() {

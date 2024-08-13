@@ -1,94 +1,88 @@
-#include <atomic>
 #include <iostream>
+#include <atomic>
 
-template <typename T> class Node {
+template<typename T>
+class Node{
 public:
-  T value;
-  std::atomic<Node<T> *> next;
-  Node(T val) : value(val), next(nullptr) {}
-  Node() : next(nullptr) {}
+  T val_;
+  std::atomic<Node<T>*> next_;
+  Node(T val): val_(val), next_(nullptr) {}
+  Node():next_(nullptr) {}
 };
 
-/**
- * Multi-Producers and Multi-Consumers LockFreeQueue.
- * 原版本在lockfreequeue.cpp中
- */
-template <typename T> class LockFreeQueue {
-private:
-  std::atomic<Node<T> *> head_;
-  std::atomic<Node<T> *> tail_;
-
+template<typename T>
+class LockFreeQueue{
 public:
   LockFreeQueue() {
-    Node<T> *dummyNd = new Node<T>(-1);
-    head_.store(dummyNd, std::memory_order_relaxed);
-    tail_.store(dummyNd, std::memory_order_relaxed);
+    Node<T>* dummy = new Node<T> (-1);
+    // relax语义
+    head_.store(dummy);
+    head_.store(dummy);
   }
 
   ~LockFreeQueue() {
-    while (Node<T> *nd = head_.load(std::memory_order_relaxed)) {
-      head_.store(nd->next.load(std::memory_order_relaxed),
-                  std::memory_order_relaxed);
+    // relax语义
+    while (Node<T>* nd = head_.load()) {
+      head_.store(nd->next_);
       delete nd;
     }
   }
 
-  void enqueue(T value) {
-    Node<T> *newNode = new Node<T> *(T);
-    Node<T> *oldTail;
-    Node<T> *nullNode = nullptr;
+  void enqueue(T val) {
+    Node<T>* nd = new Node<T>(val);
+    Node<T>* oldTail;
+
     while (true) {
-      oldTail = tail_.load(std::memory_order_relaxed);
-      Node<T> *nextNd = oldTail->next.load(std::memory_order_acquire);
-      // 当next为nullptr时，说明没有别的线程进行入队，可以直接插入
-      if (nextNd == nullptr) {
-        if (oldTail->next.compare_exchange_strong(nullNode, newNode,
-                                                  std::memory_order_release,
-                                                  std::memory_order_relaxed)) {
-          tail_.compare_exchange_strong(oldTail, newNode,
-                                        std::memory_order_release,
-                                        std::memory_order_relaxed);
-          break;
-        } else { // 期间有新的节点入队，更新tail_节点
-          tail_.compare_exchange_strong(oldTail, nextNd,
-                                        std::memory_order_release,
-                                        std::memory_order_relaxed);
+      // relax语义
+      oldTail = tail_.load();
+      // acquire语义
+      Node<T>* next = oldTail->next_.load();
+      // acquire语义，tail指针一致可以进行下一步
+      if (tail_.load() == oldTail) {
+        // 没有新的节点正在插入
+        if (next == nullptr) {
+          // 插入新节点, release语义
+          if (oldTail->next_.compare_exchange_strong(nullptr, nd)) {
+            tail_.compare_exchange_strong(oldTail, nd);
+            break;
+          }
+        } else {
+          // 说明有正在插入的节点,帮助其完成插入, release语义
+          tail_.compare_exchange_strong(oldTail, next);
         }
       }
     }
   }
 
-  bool dequeue(T &value) {
-    Node<T> *oldHead;
-    Node<T> *oldTail;
-    Node<T> *next;
-
+  bool dequeue(T& val) {
+    Node<T>* oldHead;
+    Node<T>* oldTail;
+    Node<T>* next;
     while (true) {
-      oldHead = head.load(std::memory_order_relaxed); // 读取头指针
-      oldTail = tail.load(std::memory_order_relaxed); // 读取尾指针
-      next = oldHead->next.load(std::memory_order_acquire);
-
-      if (oldHead == head_.load(std::memory_order_acquire)) {
-        // 说明当前队列为空或者有一个待入栈的节点
-        if (oldHead == oldTail) {
-          // 说明队列为空
-          if (oldTail->next == nullptr) {
-            return false;
-          }
-          // 当前正在发生入队操作，帮助完成该操作
-          tail_.compare_exchange_strong(oldTail, next,
-                                        std::memory_order_release,
-                                        std::memory_order_relaxed);
-        } else { // 队列中存在元素
-          value = next->value;
-          head_.compare_exchange_strong(oldHead, next,
-                                        std::memory_order_release,
-                                        std::memory_order_consume);
-          break;
+      // relaxed语义
+      oldHead = head_.load();
+      oldTail = head_.load();
+      // acquire语义
+      next = oldHead->next_.load();
+      if (oldHead == oldTail) {
+        // 队列为空
+        if (next == nullptr) {
+          return false;
         }
+        // 帮助其完成插入, release语义
+        tail_.compare_exchange_strong(oldTail, next);
+      } else { // 存在节点
+        val = next->val_;
+        // release语义
+        head_.compare_exchange_strong(oldHead, next);
+        delete oldHead;
+        break;
       }
     }
-    delete oldHead;
     return true;
   }
+
+private:
+  std::atomic<Node<T>*> head_;
+  std::atomic<Node<T>*> tail_;
 };
